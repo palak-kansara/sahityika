@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.conf import settings
 
 
 class Household(models.Model):
@@ -33,6 +34,16 @@ class Book(models.Model):
         related_name="books",
         null=True,
         blank=True
+    )
+
+    # added_by: set automatically by admin/API; nullable for migration safety
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="added_books",
+        editable=False
     )
 
     isbn_10 = models.CharField(max_length=10, blank=True)
@@ -91,7 +102,8 @@ class Book(models.Model):
                 "thumbnail": data["thumbnail"],
                 "preview_link": data["preview_link"],
                 "info_link": data["info_link"],
-                "household": data["household"]
+                "household": data["household"],
+                "added_by": data.get("added_by")
             },
         )
 
@@ -118,10 +130,14 @@ class UserProfile(models.Model):
     def __str__(self):
         return self.user.username
 
+    @property
+    def full_name(self):
+        return f"{self.user.first_name} {self.user.last_name}".strip()
+
 
 class ReadingProgress(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reading_progress")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="reading_progress")
     pages_read = models.PositiveIntegerField(default=0)
     progress_percent = models.PositiveIntegerField(default=0)
     last_updated = models.DateTimeField(auto_now=True)
@@ -129,9 +145,15 @@ class ReadingProgress(models.Model):
     class Meta:
         unique_together = ('user', 'book')
 
-    def save(self):
-        self.progress_percent = self.pages_read * 100 / self.book.page_count
-        super().save()
+    def save(self, *args, **kwargs):
+        if self.book.page_count:
+            self.progress_percent = int(
+                (self.pages_read / self.book.page_count) * 100
+            )
+        else:
+            self.progress_percent = 0
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user.username} - {self.book.title} ({self.progress_percent}%)"

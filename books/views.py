@@ -1,21 +1,43 @@
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
-from rest_framework.viewsets import ReadOnlyModelViewSet
+from rest_framework.viewsets import ReadOnlyModelViewSet, ModelViewSet
 from rest_framework import status, permissions
 from rest_framework.response import Response
 from django.contrib.auth.models import User
 
-from .models import Book, ReadingProgress, Household, FavouriteBook
-from .serializers import BookSerializer, ReadingProgressSerializer, ISBNInputSerializer
+from .models import Book, ReadingProgress, Household, FavouriteBook, UserProfile, Author
+from .serializers import BookSerializer, ReadingProgressSerializer, ISBNInputSerializer, UserProfileSerializer, \
+    AuthorSerializer
 from .services import FetchBook
 from django.contrib.auth import login
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 from knox.views import LoginView as KnoxLoginView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter
-from rest_framework import decorators, response
-from rest_framework.status import HTTP_201_CREATED, HTTP_200_OK
+from rest_framework import decorators
+from rest_framework.status import HTTP_200_OK
 from rest_framework.viewsets import ViewSet
+from rest_framework.generics import CreateAPIView
+
+
+class ProfileViewSet(ViewSet):
+    """ViewSet that returns the authenticated user's profile.
+
+    list: returns the requesting user's profile (mounted at /profile/)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        user = request.user
+
+        try:
+            profile = user.userprofile
+        except UserProfile.DoesNotExist:
+            # If no profile exists, return basic user info
+            return Response({"user": {"id": user.id, "first_name": user.first_name}})
+
+        serializer = UserProfileSerializer(profile, context={"request": request})
+        return Response(serializer.data)
 
 
 @api_view(['GET'])
@@ -28,30 +50,6 @@ def book_list(request):
         many=True,
         context={'request': request}
     )
-    return Response(serializer.data)
-
-
-@api_view(['POST'])
-def update_reading_progress(request):
-    """
-    Create or update reading progress for a book
-    """
-    book_id = request.data.get('book')
-    progress = request.data.get('progress_percent')
-
-    obj, created = ReadingProgress.objects.update_or_create(
-        user=request.user,
-        book_id=book_id,
-        defaults={'progress_percent': progress}
-    )
-
-    serializer = ReadingProgressSerializer(obj)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-def my_reading_progress(request):
-    progress = ReadingProgress.objects.filter(user=request.user)
-    serializer = ReadingProgressSerializer(progress, many=True)
     return Response(serializer.data)
 
 
@@ -98,6 +96,7 @@ class AddBookByISBNView(APIView):
                 raise Book.DoesNotExist
             household, _ = Household.objects.get_or_create(name='Sahityika Family')
             book_data["household"] = household
+            book_data["added_by"] = request.user
             book = Book.create_or_update_book(book_data)
             print(book)
             return Response(
@@ -115,6 +114,12 @@ class AddBookByISBNView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class BookCreateAPIView(CreateAPIView):
+    queryset = Book.objects.all()
+    serializer_class = BookSerializer
+    permission_classes = [IsAuthenticated]
 
 
 class BookViewSet(ReadOnlyModelViewSet):
@@ -143,7 +148,7 @@ class BookViewSet(ReadOnlyModelViewSet):
             Book.objects
             .select_related()
             .prefetch_related("authors")
-            .order_by("title")
+            .order_by("-created_at")
         )
 
     @decorators.action(detail=True, methods=["POST"], url_path="favourite")
@@ -183,6 +188,22 @@ class BookViewSet(ReadOnlyModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @decorators.action(detail=False, methods=["GET"], url_path="read_list")
+    def read_book_list(self, request, pk=None):
+        user = request.user
+        params = {'user': user}
+        favourite = ReadingProgress.objects.filter(**params)
+        books = Book.objects.filter(id__in=favourite.values_list("book"))
+        queryset = self.filter_queryset(books)
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 class FavouriteBookViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [SearchFilter]
@@ -202,3 +223,62 @@ class FavouriteBookViewSet(ViewSet):
             books, many=True, context={"request": request}
         )
         return Response(serializer.data)
+
+
+class ReadingProgressViewSet(ModelViewSet):
+    serializer_class = ReadingProgressSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = [
+        "book__title",
+        "book__subtitle",
+        "book__isbn_10",
+        "book__isbn_13",
+        "book__categories",
+        "book__publisher",
+        "book__authors__name",
+    ]
+
+    def get_queryset(self):
+        return (
+            ReadingProgress.objects
+            .filter(user=self.request.user)
+            .select_related("book")
+            .prefetch_related("book__authors")
+            .order_by("-last_updated")
+        )
+
+class AuthorListAPI(ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter]
+    search_fields = ["name"]
+    serializer_class = AuthorSerializer
+
+    def get_queryset(self):
+        return Author.objects.order_by("name")
+
+
+class CategoryListAPI(APIView):
+    """Return unique categories (split on commas) present in Book.categories."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Book.objects.values_list('categories', flat=True)
+        cats = set()
+        for val in qs:
+            if not val:
+                continue
+            for part in val.split(','):
+                p = part.strip()
+                if p:
+                    cats.add(p)
+        return Response(sorted(cats))
+
+
+class PublisherListAPI(APIView):
+    """Return unique non-empty publishers present in Book.publisher."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Book.objects.values_list('publisher', flat=True).exclude(publisher__isnull=True)
+        pubs = {p.strip() for p in qs if p and p.strip()}
+        return Response(sorted(pubs))
