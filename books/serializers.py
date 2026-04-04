@@ -97,35 +97,57 @@ class BookSerializer(serializers.ModelSerializer):
             if not attrs.get('isbn_10') and not attrs.get('isbn_13'):
                 raise serializers.ValidationError("Either 'isbn_10' or 'isbn_13' is required.")
 
-        request = self.context.get('request')
-        if request and request.method == 'POST':
-            # Ensure added_by is set from request.user
+            request = self.context.get('request')
             user = getattr(request, 'user', None)
-            if user and user.is_authenticated:
-                attrs['added_by'] = user
-                household = user.profile.household if hasattr(user, 'profile') else None
-                if household:
-                    raise serializers.ValidationError("User must belong to a household to add a book.")
-
-                attrs['household'] = household
-            else:
+            if not (user and user.is_authenticated):
                 raise serializers.ValidationError("Authentication required to add a book.")
+
+            userprofile = getattr(user, 'userprofile', None)
+            if not userprofile or not userprofile.household:
+                raise serializers.ValidationError("User must belong to a household to add a book.")
+
         return attrs
 
     def create(self, validated_data):
         author_names = validated_data.pop('author_names', [])
 
-        # Create household if an id provided (serializer currently expects PK)
-        book = Book.objects.create(**validated_data)
+        request = self.context.get('request')
+        user = request.user
+        userprofile = getattr(user, 'userprofile', None)
 
-        # Handle authors list
-        authors = []
-        for name in author_names:
-            author, _ = Author.objects.get_or_create(name=name)
-            authors.append(author)
+        book = Book.objects.create(
+            **validated_data,
+            added_by=user,
+            household=userprofile.household if userprofile else None,
+        )
+
+        authors = [Author.objects.get_or_create(name=name)[0] for name in author_names]
         if authors:
             book.authors.set(authors)
         return book
+
+    def update(self, instance, validated_data):
+        # Handle authors separately
+        author_names = validated_data.pop('author_names', None)
+
+        # Prevent changing household and added_by via API
+        validated_data.pop('household', None)
+        validated_data.pop('added_by', None)
+
+        # Update simple fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # Update authors if provided
+        if author_names is not None:
+            authors = []
+            for name in author_names:
+                author, _ = Author.objects.get_or_create(name=name)
+                authors.append(author)
+            instance.authors.set(authors)
+
+        return instance
 
 
 class ReadingProgressSerializer(serializers.ModelSerializer):
