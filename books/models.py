@@ -118,10 +118,14 @@ class UserProfile(models.Model):
     def __str__(self):
         return self.user.username
 
+    @property
+    def full_name(self):
+        return f"{self.user.first_name} {self.user.last_name}".strip()
+
 
 class ReadingProgress(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reading_progress")
+    book = models.ForeignKey(Book, on_delete=models.CASCADE, related_name="reading_progress")
     pages_read = models.PositiveIntegerField(default=0)
     progress_percent = models.PositiveIntegerField(default=0)
     last_updated = models.DateTimeField(auto_now=True)
@@ -129,9 +133,15 @@ class ReadingProgress(models.Model):
     class Meta:
         unique_together = ('user', 'book')
 
-    def save(self):
-        self.progress_percent = self.pages_read * 100 / self.book.page_count
-        super().save()
+    def save(self, *args, **kwargs):
+        if self.book.page_count:
+            self.progress_percent = int(
+                (self.pages_read / self.book.page_count) * 100
+            )
+        else:
+            self.progress_percent = 0
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.user.username} - {self.book.title} ({self.progress_percent}%)"

@@ -1,21 +1,41 @@
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
-from rest_framework.viewsets import ReadOnlyModelViewSet
+from rest_framework.viewsets import ReadOnlyModelViewSet, ModelViewSet
 from rest_framework import status, permissions
 from rest_framework.response import Response
 from django.contrib.auth.models import User
 
-from .models import Book, ReadingProgress, Household, FavouriteBook
-from .serializers import BookSerializer, ReadingProgressSerializer, ISBNInputSerializer
+from .models import Book, ReadingProgress, Household, FavouriteBook, UserProfile
+from .serializers import BookSerializer, ReadingProgressSerializer, ISBNInputSerializer, UserProfileSerializer
 from .services import FetchBook
 from django.contrib.auth import login
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 from knox.views import LoginView as KnoxLoginView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter
-from rest_framework import decorators, response
-from rest_framework.status import HTTP_201_CREATED, HTTP_200_OK
+from rest_framework import decorators
+from rest_framework.status import HTTP_200_OK
 from rest_framework.viewsets import ViewSet
+
+
+class ProfileViewSet(ViewSet):
+    """ViewSet that returns the authenticated user's profile.
+
+    list: returns the requesting user's profile (mounted at /profile/)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        user = request.user
+
+        try:
+            profile = user.userprofile
+        except UserProfile.DoesNotExist:
+            # If no profile exists, return basic user info
+            return Response({"user": {"id": user.id, "first_name": user.first_name}})
+
+        serializer = UserProfileSerializer(profile, context={"request": request})
+        return Response(serializer.data)
 
 
 @api_view(['GET'])
@@ -28,30 +48,6 @@ def book_list(request):
         many=True,
         context={'request': request}
     )
-    return Response(serializer.data)
-
-
-@api_view(['POST'])
-def update_reading_progress(request):
-    """
-    Create or update reading progress for a book
-    """
-    book_id = request.data.get('book')
-    progress = request.data.get('progress_percent')
-
-    obj, created = ReadingProgress.objects.update_or_create(
-        user=request.user,
-        book_id=book_id,
-        defaults={'progress_percent': progress}
-    )
-
-    serializer = ReadingProgressSerializer(obj)
-    return Response(serializer.data)
-
-@api_view(['GET'])
-def my_reading_progress(request):
-    progress = ReadingProgress.objects.filter(user=request.user)
-    serializer = ReadingProgressSerializer(progress, many=True)
     return Response(serializer.data)
 
 
@@ -183,6 +179,22 @@ class BookViewSet(ReadOnlyModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
+    @decorators.action(detail=False, methods=["GET"], url_path="read_list")
+    def read_book_list(self, request, pk=None):
+        user = request.user
+        params = {'user': user}
+        favourite = ReadingProgress.objects.filter(**params)
+        books = Book.objects.filter(id__in=favourite.values_list("book"))
+        queryset = self.filter_queryset(books)
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 class FavouriteBookViewSet(ViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [SearchFilter]
@@ -202,3 +214,26 @@ class FavouriteBookViewSet(ViewSet):
             books, many=True, context={"request": request}
         )
         return Response(serializer.data)
+
+
+class ReadingProgressViewSet(ModelViewSet):
+    serializer_class = ReadingProgressSerializer
+    permission_classes = [IsAuthenticated]
+    search_fields = [
+        "book__title",
+        "book__subtitle",
+        "book__isbn_10",
+        "book__isbn_13",
+        "book__categories",
+        "book__publisher",
+        "book__authors__name",
+    ]
+
+    def get_queryset(self):
+        return (
+            ReadingProgress.objects
+            .filter(user=self.request.user)
+            .select_related("book")
+            .prefetch_related("book__authors")
+            .order_by("-last_updated")
+        )

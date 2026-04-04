@@ -1,0 +1,4 @@
+- Always be extremely concise.
+- Do not show your "thought process" or "planning steps" in Agent mode.
+- Provide only the code changes and a 1-sentence summary of what was done.
+- If no code is needed, answer in 10 words or less.
