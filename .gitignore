@@ -1,3 +1,21 @@
-books/__pycache__/*
-.idea
-books/migrations/__pycache__/*
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Django
+db.sqlite3
+staticfiles/
+media/
+*.log
+
+# Environment
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
