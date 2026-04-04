@@ -38,7 +38,7 @@ admin.site.register(User, CustomUserAdmin)
 
 class BookAdmin(admin.ModelAdmin):
     # Hide added_by from the editable form
-    exclude = ('added_by',)
+    readonly_fields = ('added_by',)
 
     def save_model(self, request, obj, form, change):
         if not obj.added_by:
