@@ -31,7 +31,6 @@ class FetchBook:
                 isbn_10 = item["identifier"]
             elif item["type"] == "ISBN_13":
                 isbn_13 = item["identifier"]
-
         return {
             "title": info.get("title", "Unknown"),
             "subtitle": info.get("subtitle", ""),
