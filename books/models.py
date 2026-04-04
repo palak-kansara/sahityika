@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.conf import settings
 
 
 class Household(models.Model):
@@ -33,6 +34,16 @@ class Book(models.Model):
         related_name="books",
         null=True,
         blank=True
+    )
+
+    # added_by: set automatically by admin/API; nullable for migration safety
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="added_books",
+        editable=False
     )
 
     isbn_10 = models.CharField(max_length=10, blank=True)
@@ -91,7 +102,8 @@ class Book(models.Model):
                 "thumbnail": data["thumbnail"],
                 "preview_link": data["preview_link"],
                 "info_link": data["info_link"],
-                "household": data["household"]
+                "household": data["household"],
+                "added_by": data.get("added_by")
             },
         )
 

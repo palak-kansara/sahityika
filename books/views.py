@@ -5,8 +5,9 @@ from rest_framework import status, permissions
 from rest_framework.response import Response
 from django.contrib.auth.models import User
 
-from .models import Book, ReadingProgress, Household, FavouriteBook, UserProfile
-from .serializers import BookSerializer, ReadingProgressSerializer, ISBNInputSerializer, UserProfileSerializer
+from .models import Book, ReadingProgress, Household, FavouriteBook, UserProfile, Author
+from .serializers import BookSerializer, ReadingProgressSerializer, ISBNInputSerializer, UserProfileSerializer, \
+    AuthorSerializer
 from .services import FetchBook
 from django.contrib.auth import login
 from rest_framework.authtoken.serializers import AuthTokenSerializer
@@ -16,6 +17,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework import decorators
 from rest_framework.status import HTTP_200_OK
 from rest_framework.viewsets import ViewSet
+from rest_framework.generics import CreateAPIView
 
 
 class ProfileViewSet(ViewSet):
@@ -94,6 +96,7 @@ class AddBookByISBNView(APIView):
                 raise Book.DoesNotExist
             household, _ = Household.objects.get_or_create(name='Sahityika Family')
             book_data["household"] = household
+            book_data["added_by"] = request.user
             book = Book.create_or_update_book(book_data)
             print(book)
             return Response(
@@ -111,6 +114,12 @@ class AddBookByISBNView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class BookCreateAPIView(CreateAPIView):
+    queryset = Book.objects.all()
+    serializer_class = BookSerializer
+    permission_classes = [IsAuthenticated]
 
 
 class BookViewSet(ReadOnlyModelViewSet):
@@ -139,7 +148,7 @@ class BookViewSet(ReadOnlyModelViewSet):
             Book.objects
             .select_related()
             .prefetch_related("authors")
-            .order_by("title")
+            .order_by("-created_at")
         )
 
     @decorators.action(detail=True, methods=["POST"], url_path="favourite")
@@ -237,3 +246,39 @@ class ReadingProgressViewSet(ModelViewSet):
             .prefetch_related("book__authors")
             .order_by("-last_updated")
         )
+
+class AuthorListAPI(ReadOnlyModelViewSet):
+    permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter]
+    search_fields = ["name"]
+    serializer_class = AuthorSerializer
+
+    def get_queryset(self):
+        return Author.objects.order_by("name")
+
+
+class CategoryListAPI(APIView):
+    """Return unique categories (split on commas) present in Book.categories."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Book.objects.values_list('categories', flat=True)
+        cats = set()
+        for val in qs:
+            if not val:
+                continue
+            for part in val.split(','):
+                p = part.strip()
+                if p:
+                    cats.add(p)
+        return Response(sorted(cats))
+
+
+class PublisherListAPI(APIView):
+    """Return unique non-empty publishers present in Book.publisher."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = Book.objects.values_list('publisher', flat=True).exclude(publisher__isnull=True)
+        pubs = {p.strip() for p in qs if p and p.strip()}
+        return Response(sorted(pubs))

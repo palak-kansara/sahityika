@@ -35,7 +35,18 @@ class CustomUserAdmin(BaseUserAdmin):
 admin.site.unregister(User)
 admin.site.register(User, CustomUserAdmin)
 
-admin.site.register(Book)
+
+class BookAdmin(admin.ModelAdmin):
+    # Hide added_by from the editable form
+    exclude = ('added_by',)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.added_by:
+            obj.added_by = request.user
+        super().save_model(request, obj, form, change)
+
+
+admin.site.register(Book, BookAdmin)
 admin.site.register(Author)
 admin.site.register(Household)
 # UserProfile is now edited inline on the User admin, so don't register it separately
