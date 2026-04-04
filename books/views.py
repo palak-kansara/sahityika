@@ -14,10 +14,11 @@ from rest_framework.authtoken.serializers import AuthTokenSerializer
 from knox.views import LoginView as KnoxLoginView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter
+from django_filters.rest_framework import DjangoFilterBackend
+from .filters import BookFilter, ReadingProgressFilter
 from rest_framework import decorators
 from rest_framework.status import HTTP_200_OK
 from rest_framework.viewsets import ViewSet
-from rest_framework.generics import CreateAPIView
 
 
 class ProfileViewSet(ViewSet):
@@ -116,39 +117,21 @@ class AddBookByISBNView(APIView):
             )
 
 
-class BookCreateAPIView(CreateAPIView):
-    queryset = Book.objects.all()
+
+class BookViewSet(ModelViewSet):
     serializer_class = BookSerializer
     permission_classes = [IsAuthenticated]
-
-
-class BookViewSet(ReadOnlyModelViewSet):
-    """
-    list:
-    Return list of books
-
-    retrieve:
-    Return single book details
-    """
-    serializer_class = BookSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [SearchFilter]
-    search_fields = [
-        "title",
-        "subtitle",
-        "isbn_10",
-        "isbn_13",
-        "categories",
-        "publisher",
-        "authors__name",
-    ]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_class = BookFilter
+    search_fields = ["title", "subtitle", "isbn_10", "isbn_13", "categories", "publisher", "authors__name"]
 
     def get_queryset(self):
+        household = getattr(getattr(self.request.user, 'userprofile', None), 'household', None)
         return (
             Book.objects
-            .select_related()
-            .prefetch_related("authors")
-            .order_by("-created_at")
+            .select_related('added_by')
+            .prefetch_related('authors')
+            .order_by('-created_at')
         )
 
     @decorators.action(detail=True, methods=["POST"], url_path="favourite")
@@ -228,15 +211,9 @@ class FavouriteBookViewSet(ViewSet):
 class ReadingProgressViewSet(ModelViewSet):
     serializer_class = ReadingProgressSerializer
     permission_classes = [IsAuthenticated]
-    search_fields = [
-        "book__title",
-        "book__subtitle",
-        "book__isbn_10",
-        "book__isbn_13",
-        "book__categories",
-        "book__publisher",
-        "book__authors__name",
-    ]
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_class = ReadingProgressFilter
+    search_fields = ["book__title", "book__subtitle", "book__isbn_10", "book__isbn_13", "book__categories", "book__publisher", "book__authors__name"]
 
     def get_queryset(self):
         return (
