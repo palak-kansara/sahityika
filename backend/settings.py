@@ -180,3 +180,5 @@ REST_KNOX = {
 }
 
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+GOOGLE_BOOKS_API_KEY = os.environ.get('GOOGLE_BOOKS_API_KEY')
+USE_GOOGLE_KEY = os.environ.get('USE_GOOGLE_KEY', False)
