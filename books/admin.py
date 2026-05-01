@@ -57,22 +57,26 @@ class BookAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
     def export_all(self, request):
-        queryset = Book.objects.all()
+        queryset = Book.objects.all().order_by("-id")
         return self._build_excel_response(queryset)
 
     def _build_excel_response(self, queryset):
         wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = 'Books'
 
-        ws.append([
+        # --- Sheet 1: Books ---
+        ws_books = wb.active
+        ws_books.title = 'Books'
+
+        ws_books.append([
             'ID', 'Title', 'Subtitle', 'Authors', 'Publisher', 'Published Date',
             'ISBN-10', 'ISBN-13', 'Categories', 'Language', 'Page Count',
-            'Description', 'Household', 'Added By', 'Created At',
+            'Description', 'Thumbnail', 'Preview Link', 'Info Link',
+            'Household', 'Added By', 'Created At',
         ])
 
-        for book in queryset.prefetch_related('authors').select_related('household', 'added_by'):
-            ws.append([
+        books_qs = queryset.prefetch_related('authors').select_related('household', 'added_by')
+        for book in books_qs:
+            ws_books.append([
                 book.id,
                 book.title,
                 book.subtitle,
@@ -85,10 +89,20 @@ class BookAdmin(admin.ModelAdmin):
                 book.language,
                 book.page_count,
                 book.description,
-                str(book.household) if book.household else '',
-                str(book.added_by) if book.added_by else '',
+                book.thumbnail,
+                book.preview_link,
+                book.info_link,
+                book.household.name if book.household else '',
+                book.added_by.username if book.added_by else '',
                 book.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             ])
+
+        # --- Sheet 2: Authors ---
+        ws_authors = wb.create_sheet(title='Authors')
+        ws_authors.append(['ID', 'Name'])
+
+        for author in Author.objects.order_by('-id'):
+            ws_authors.append([author.id, author.name])
 
         response = HttpResponse(
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
